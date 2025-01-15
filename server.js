@@ -6,7 +6,7 @@ const { router: loginRoute, isAuthenticated } = require("./routes/login");
 
 app.use(
   cors({
-    origin: ["http://localhost:5000", "http://localhost:3000"],
+    origin: [process.env.REACT_APP_API_URL, "http://localhost:3000"],
     credentials: true,
   })
 );
@@ -30,5 +30,10 @@ app.use("/login", loginRoute);
 app.use("/signup", require("./routes/signup"));
 
 app.listen(process.env.PORT || 3000, () => {
-  console.log("Server is running");
+  if (!process.env.PORT) {
+    console.log("Server is running on port: 3000");
+  }
+  else {
+    console.log("Server is running on port: " + process.env.PORT);
+  }
 });
