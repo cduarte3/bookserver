@@ -6,7 +6,7 @@ const { router: loginRoute, isAuthenticated } = require("./routes/login");
 
 app.use(
   cors({
-    origin: [process.env.REACT_APP_API_URL, "http://localhost:3000"],
+    origin: [process.env.REACT_APP_API_URL, "http://localhost:3000", "https://chapterchat-bice.vercel.app"],
     credentials: true,
   })
 );
