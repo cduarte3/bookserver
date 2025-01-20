@@ -1,12 +1,18 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+const mongoose = require("mongoose");
 const app = express();
 const { router: loginRoute, isAuthenticated } = require("./routes/login");
 
+mongoose
+  .connect(process.env.DATABASE_URL)
+  .then(() => console.log("MongoDB connected"))
+  .catch((err) => console.error("MongoDB connection error:", err));
+
 app.use(
   cors({
-    origin: [process.env.REACT_APP_API_URL, "http://localhost:3000", "https://chapterchat-bice.vercel.app"],
+    origin: ["http://localhost:3000", "https://chapterchat-bice.vercel.app"],
     credentials: true,
   })
 );
@@ -32,8 +38,7 @@ app.use("/signup", require("./routes/signup"));
 app.listen(process.env.PORT || 3000, () => {
   if (!process.env.PORT) {
     console.log("Server is running on port: 3000");
-  }
-  else {
+  } else {
     console.log("Server is running on port: " + process.env.PORT);
   }
 });

@@ -3,12 +3,9 @@ const router = express.Router();
 const { MongoClient } = require("mongodb");
 const bcrypt = require("bcrypt");
 const cookieParser = require("cookie-parser");
-const jwt = require('jsonwebtoken');
+const jwt = require("jsonwebtoken");
 
-const client = new MongoClient(process.env.DATABASE_URL, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-});
+const client = new MongoClient(process.env.DATABASE_URL);
 
 router.use(cookieParser());
 
@@ -28,9 +25,14 @@ router.post("/", async (req, res) => {
     if (user) {
       const match = await bcrypt.compare(password, user.password);
       if (match) {
-        const token = jwt.sign({ id: user._id }, process.env.SESSION_KEY, { expiresIn: '1h' });
+        const token = jwt.sign({ id: user._id }, process.env.SESSION_KEY, {
+          expiresIn: "1h",
+        });
         // Send token
-        res.set('Authorization', `Bearer ${token}`).status(200).json({ id: user._id, token: token });
+        res
+          .set("Authorization", `Bearer ${token}`)
+          .status(200)
+          .json({ id: user._id, token: token });
       } else {
         res.status(401).json({ message: "Invalid password" });
       }
@@ -47,8 +49,8 @@ router.post("/", async (req, res) => {
 
 function getToken(req) {
   const authHeader = req.headers.authorization;
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    return authHeader.split(' ')[1];
+  if (authHeader && authHeader.startsWith("Bearer ")) {
+    return authHeader.split(" ")[1];
   }
   return null;
 }
@@ -71,4 +73,4 @@ function isAuthenticated(req) {
   }
 }
 
-module.exports = {router, isAuthenticated};
+module.exports = { router, isAuthenticated };

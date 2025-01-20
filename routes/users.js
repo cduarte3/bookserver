@@ -69,18 +69,15 @@ router.get("/:email/:username", async (req, res) => {
 });
 
 // post a review for a book by user ID
-router.post("/:userid", upload.single("cover"), async (req, res) => {
+router.post("/:userid", async (req, res) => {
   const userId = req.params.userid;
-  const { author, title, review, rating } = req.body;
-  const cover = req.file;
+  const { author, title, review, rating, cover, genre } = req.body;
 
   if (!userId) {
     return res.status(400).json({ message: "User ID is required" });
   }
 
   try {
-    const resizedCover = await sharp(cover.buffer).resize(800, 1220).toBuffer();
-
     await client.connect();
     const collection = client.db("chapterchat").collection("users");
 
@@ -95,7 +92,8 @@ router.post("/:userid", upload.single("cover"), async (req, res) => {
             title: title,
             review: review,
             rating: rating,
-            cover: resizedCover.toString("base64"),
+            cover: cover,
+            genre,
           },
         },
       }
@@ -118,60 +116,67 @@ router.post("/:userid", upload.single("cover"), async (req, res) => {
 });
 
 // update/edit a book's information
-router.post("/:userid/book/:bookId/edit", upload.single("cover"), async (req, res) => {
-  const userId = req.params.userid;
-  const bookId = req.params.bookId;
-  const { author, title, review, rating } = req.body;
-  const coverFile = req.file;
-  const coverBufferString = req.body.cover;
+router.post(
+  "/:userid/book/:bookId/edit",
+  upload.single("cover"),
+  async (req, res) => {
+    const userId = req.params.userid;
+    const bookId = req.params.bookId;
+    const { author, title, review, rating } = req.body;
+    const coverFile = req.file;
+    const coverBufferString = req.body.cover;
 
-  if (!userId || !bookId) {
-    return res.status(400).json({ message: "User ID and Book ID are required" });
-  }
-
-  try {
-    let resizedCover;
-    if (coverFile) {
-      resizedCover = await sharp(coverFile.buffer).resize(800, 1220).toBuffer();
-    } 
-    else if (coverBufferString) {
-      const buffer = Buffer.from(coverBufferString, "base64");
-      resizedCover = await sharp(buffer).resize(800, 1220).toBuffer();
-    } 
-
-    await client.connect();
-    const collection = client.db("chapterchat").collection("users");
-
-    const updateFields = {
-      "books.$.author": author,
-      "books.$.title": title,
-      "books.$.review": review,
-      "books.$.rating": rating,
-    };
-
-    if (resizedCover) {
-      updateFields["books.$.cover"] = resizedCover.toString("base64");
+    if (!userId || !bookId) {
+      return res
+        .status(400)
+        .json({ message: "User ID and Book ID are required" });
     }
 
-    const result = await collection.updateOne(
-      { _id: new ObjectId(userId), "books.id": new ObjectId(bookId) },
-      { $set: updateFields }
-    );
+    try {
+      let resizedCover;
+      if (coverFile) {
+        resizedCover = await sharp(coverFile.buffer)
+          .resize(800, 1220)
+          .toBuffer();
+      } else if (coverBufferString) {
+        const buffer = Buffer.from(coverBufferString, "base64");
+        resizedCover = await sharp(buffer).resize(800, 1220).toBuffer();
+      }
 
-    if (result.matchedCount === 0) {
-      res.status(404).json({ message: "User not found" });
-    } else if (result.modifiedCount === 0) {
-      res.status(404).json({ message: "Book not found" });
-    } else {
-      res.status(200).json({ message: "Book updated successfully" });
+      await client.connect();
+      const collection = client.db("chapterchat").collection("users");
+
+      const updateFields = {
+        "books.$.author": author,
+        "books.$.title": title,
+        "books.$.review": review,
+        "books.$.rating": rating,
+      };
+
+      if (resizedCover) {
+        updateFields["books.$.cover"] = resizedCover.toString("base64");
+      }
+
+      const result = await collection.updateOne(
+        { _id: new ObjectId(userId), "books.id": new ObjectId(bookId) },
+        { $set: updateFields }
+      );
+
+      if (result.matchedCount === 0) {
+        res.status(404).json({ message: "User not found" });
+      } else if (result.modifiedCount === 0) {
+        res.status(404).json({ message: "Book not found" });
+      } else {
+        res.status(200).json({ message: "Book updated successfully" });
+      }
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: err.message });
+    } finally {
+      await client.close();
     }
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: err.message });
-  } finally {
-    await client.close();
   }
-});
+);
 
 // get book information
 router.get("/:userid/book/:bookId", async (req, res) => {
@@ -267,12 +272,14 @@ router.post("/:userid/update", async (req, res) => {
     const existingUser = await collection.findOne({
       $or: [
         { email: email, _id: { $ne: new ObjectId(userId) } },
-        { username: username, _id: { $ne: new ObjectId(userId) } }
-      ]
+        { username: username, _id: { $ne: new ObjectId(userId) } },
+      ],
     });
     // return a 409 error for the client side to receive if there is existing fields
     if (existingUser) {
-      return res.status(409).json({ message: "Email or username already exists" });
+      return res
+        .status(409)
+        .json({ message: "Email or username already exists" });
     }
 
     // Update the user's fields if they are provided
@@ -286,7 +293,10 @@ router.post("/:userid/update", async (req, res) => {
     }
     console.log(updateFields);
     // Save the updated user
-    await collection.updateOne({ _id: new ObjectId(userId) }, { $set: updateFields });
+    await collection.updateOne(
+      { _id: new ObjectId(userId) },
+      { $set: updateFields }
+    );
 
     // Send a success response
     res.status(200).json({ message: "User updated successfully" });
@@ -295,6 +305,5 @@ router.post("/:userid/update", async (req, res) => {
     res.status(500).json({ message: "Internal server error" });
   }
 });
-
 
 module.exports = router;
