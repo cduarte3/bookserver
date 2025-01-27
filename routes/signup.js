@@ -1,55 +1,62 @@
 const express = require("express");
 const router = express.Router();
-const { MongoClient } = require("mongodb");
 const bcrypt = require("bcrypt");
-
-const client = new MongoClient(process.env.DATABASE_URL);
+const { v4: uuidv4 } = require("uuid");
+const { bucket } = require("../config/storage");
 
 router.post("/", async (req, res) => {
   const { email, username, password } = req.body;
 
+  // Validate input
   if (!email || !username || !password) {
-    return res
-      .status(400)
-      .json({ message: "Missing required fields: email, username, password" });
+    return res.status(400).json({
+      message: "Missing required fields: email, username, password",
+    });
+  }
+
+  if (password.length < 6) {
+    return res.status(400).json({
+      message: "Password must be at least 6 characters",
+    });
   }
 
   try {
-    await client.connect();
-    const collection = client.db("chapterchat").collection("users");
+    // Create new user ID first
+    const userId = uuidv4();
 
-    // check for existing email OR username
-    const existingUser = await collection.findOne({
-      $or: [{ email: email }, { username: username }],
+    // Check if username or email exists in any user profile
+    const [files] = await bucket.getFiles({ prefix: userId });
+    const existingUser = files.some((file) => {
+      const profile = JSON.parse(file.metadata);
+      return profile.email === email || profile.username === username;
     });
+
     if (existingUser) {
-      return res
-        .status(409)
-        .json({ message: "Email or Username already in use" });
+      return res.status(409).json({
+        message: "Email or Username already in use",
+      });
     }
 
-    // Password hashing
-    const salt = 10;
-    const hashedPassword = await bcrypt.hash(password, salt);
+    const hashedPassword = await bcrypt.hash(password, 10);
 
-    const result = await collection.insertOne({
-      email: email,
-      username: username,
+    const userData = {
+      id: userId,
+      email: email.toLowerCase(),
+      username: username.toLowerCase(),
       password: hashedPassword,
-      books: [],
-    });
+      created: new Date().toISOString(),
+    };
 
-    if (result.acknowledged) {
-      res.status(200).json(result.insertedId);
-      console.log(result.insertedId);
-    } else {
-      res.status(400).json({ message: "User not found" });
-    }
+    // Save user profile in their directory
+    await bucket.file(`${userId}/profile.json`).save(JSON.stringify(userData));
+
+    // Return userId for navigation
+    res.status(200).json(userId);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: err.message });
-  } finally {
-    await client.close();
+    res.status(500).json({
+      message: "Server error during signup",
+    });
   }
 });
 
