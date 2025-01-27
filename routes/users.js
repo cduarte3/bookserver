@@ -1,13 +1,11 @@
 const express = require("express");
 const router = express.Router();
-const { MongoClient, ObjectId } = require("mongodb");
 const multer = require("multer");
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
-const sharp = require("sharp");
 const bcrypt = require("bcrypt");
-
-const client = new MongoClient(process.env.DATABASE_URL);
+const { v4: uuidv4 } = require("uuid");
+const { bucket } = require("../config/storage");
 
 // get the info of a user by ID
 router.get("/:userid", async (req, res) => {
@@ -18,100 +16,98 @@ router.get("/:userid", async (req, res) => {
   }
 
   try {
-    await client.connect();
-    const collection = client.db("chapterchat").collection("users");
-    const user = await collection.findOne({ _id: new ObjectId(userId) });
+    // Get user profile
+    const profileFile = bucket.file(`${userId}/profile.json`);
+    const [exists] = await profileFile.exists();
 
-    if (user) {
-      const { password, ...userWithoutPassword } = user;
-      res.status(200).json(userWithoutPassword);
-    } else {
-      res.status(404).json({ message: "User not found" });
+    if (!exists) {
+      return res.status(404).json({ message: "User not found" });
     }
+
+    // Get user profile data
+    const [profileContent] = await profileFile.download();
+    const userData = JSON.parse(profileContent.toString());
+
+    // Get all books from user's directory
+    const [files] = await bucket.getFiles({ prefix: `${userId}/books/` });
+    const books = await Promise.all(
+      files.map(async (file) => {
+        const [content] = await file.download();
+        return JSON.parse(content.toString());
+      })
+    );
+
+    // Combine profile and books
+    const userWithBooks = {
+      ...userData,
+      books: books,
+    };
+
+    // Remove sensitive data
+    const { password, ...userResponse } = userWithBooks;
+    res.status(200).json(userResponse);
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: err.message });
-  } finally {
-    await client.close();
   }
 });
 
 // check if username or email exists in the system
 router.get("/:email/:username", async (req, res) => {
-  const email = req.params.email;
-  const username = req.params.username;
-
-  if (!email || !username) {
-    return res.status(400).json({ message: "Email and Username are required" });
-  }
+  const { email, username } = req.params;
 
   try {
-    await client.connect();
-    const collection = client.db("chapterchat").collection("users");
-    const emailFound = await collection.findOne({ email: email });
-    const userFound = await collection.findOne({ username: username });
+    const [files] = await bucket.getFiles();
+    const existingUser = files.some((file) => {
+      const content = JSON.parse(file.metadata);
+      return content.email === email || content.username === username;
+    });
 
-    if (userFound && emailFound) {
-      res.status(409).json({ message: "Email and Username already exist." });
-    } else if (userFound) {
-      res.status(409).json({ message: "Username already exists." });
-    } else if (emailFound) {
-      res.status(409).json({ message: "Email already exists." });
+    if (existingUser) {
+      res.status(409).json({ message: "Email or Username already exists" });
     } else {
       res.status(200).json({ message: "" });
     }
   } catch (err) {
-    console.error(err);
     res.status(500).json({ message: err.message });
-  } finally {
-    await client.close();
   }
 });
 
 // post a review for a book by user ID
 router.post("/:userid", async (req, res) => {
-  const userId = req.params.userid;
+  const { userid } = req.params;
   const { author, title, review, rating, cover, genre } = req.body;
 
-  if (!userId) {
-    return res.status(400).json({ message: "User ID is required" });
-  }
-
   try {
-    await client.connect();
-    const collection = client.db("chapterchat").collection("users");
-
-    const bookId = new ObjectId();
-    const result = await collection.updateOne(
-      { _id: new ObjectId(userId) },
-      {
-        $push: {
-          books: {
-            id: bookId,
-            author: author,
-            title: title,
-            review: review,
-            rating: rating,
-            cover: cover,
-            genre,
-          },
-        },
-      }
-    );
-
-    if (result.matchedCount === 0) {
-      res.status(404).json({ message: "User not found" });
-    } else {
-      res.status(200).json({
-        message: "Book added to shelf!",
-        bookId: bookId,
-      });
+    // Verify user exists
+    const [exists] = await bucket.file(`${userid}/profile.json`).exists();
+    if (!exists) {
+      return res.status(404).json({ message: "User not found" });
     }
+
+    const bookId = uuidv4();
+    const bookData = {
+      id: bookId,
+      author,
+      title,
+      review,
+      rating,
+      cover,
+      genre,
+    };
+
+    // Save book data
+    await bucket
+      .file(`${userid}/books/${bookId}.json`)
+      .save(JSON.stringify(bookData));
+
+    res.status(200).json({
+      message: "Book added to shelf!",
+      bookId,
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: err.message });
-  } finally {
-    await client.close();
   }
 });
 
@@ -120,189 +116,116 @@ router.post(
   "/:userid/book/:bookId/edit",
   upload.single("cover"),
   async (req, res) => {
-    const userId = req.params.userid;
-    const bookId = req.params.bookId;
-    const { author, title, review, rating } = req.body;
-    const coverFile = req.file;
-    const coverBufferString = req.body.cover;
-
-    if (!userId || !bookId) {
-      return res
-        .status(400)
-        .json({ message: "User ID and Book ID are required" });
-    }
+    const { userid, bookId } = req.params;
+    const { author, title, review, rating, cover, genre } = req.body;
 
     try {
-      let resizedCover;
-      if (coverFile) {
-        resizedCover = await sharp(coverFile.buffer)
-          .resize(800, 1220)
-          .toBuffer();
-      } else if (coverBufferString) {
-        const buffer = Buffer.from(coverBufferString, "base64");
-        resizedCover = await sharp(buffer).resize(800, 1220).toBuffer();
+      // Create bookFile reference
+      const bookFile = bucket.file(`${userid}/books/${bookId}.json`);
+      const [exists] = await bookFile.exists();
+
+      if (!exists) {
+        return res.status(404).json({ message: "Book not found" });
       }
 
-      await client.connect();
-      const collection = client.db("chapterchat").collection("users");
+      // Download existing book data
+      const [content] = await bookFile.download();
+      const bookData = JSON.parse(content.toString());
 
-      const updateFields = {
-        "books.$.author": author,
-        "books.$.title": title,
-        "books.$.review": review,
-        "books.$.rating": rating,
+      // Update book data
+      const updatedBook = {
+        ...bookData,
+        author: author || bookData.author,
+        title: title || bookData.title,
+        review: review || bookData.review,
+        rating: rating || bookData.rating,
+        cover: cover || bookData.cover,
+        genre: genre || bookData.genre,
       };
 
-      if (resizedCover) {
-        updateFields["books.$.cover"] = resizedCover.toString("base64");
-      }
+      // Save updated book data
+      await bookFile.save(JSON.stringify(updatedBook));
 
-      const result = await collection.updateOne(
-        { _id: new ObjectId(userId), "books.id": new ObjectId(bookId) },
-        { $set: updateFields }
-      );
-
-      if (result.matchedCount === 0) {
-        res.status(404).json({ message: "User not found" });
-      } else if (result.modifiedCount === 0) {
-        res.status(404).json({ message: "Book not found" });
-      } else {
-        res.status(200).json({ message: "Book updated successfully" });
-      }
+      res.status(200).json({
+        message: "Book updated successfully",
+        book: updatedBook,
+      });
     } catch (err) {
-      console.error(err);
-      res.status(500).json({ message: err.message });
-    } finally {
-      await client.close();
+      console.error("Book update error:", err);
+      res.status(500).json({
+        message: "Failed to update book",
+        error: err.message,
+      });
     }
   }
 );
 
 // get book information
 router.get("/:userid/book/:bookId", async (req, res) => {
-  const userId = req.params.userid;
-  const bookId = req.params.bookId;
-
-  if (!userId || !bookId) {
-    return res.status(400).json({ message: "User ID or Book ID is required" });
-  }
+  const { userid, bookId } = req.params;
 
   try {
-    await client.connect();
-    const collection = client.db("chapterchat").collection("users");
-    const user = await collection.findOne({ _id: new ObjectId(userId) });
-    let book;
-    if (user) {
-      let ID = new ObjectId(bookId);
-      for (let i = 0; i < user.books.length; i++) {
-        if (user.books[i].id.equals(ID)) {
-          book = user.books[i];
-          break;
-        }
-      }
-      if (book) {
-        res.status(200).json(book);
-      } else {
-        res.status(404).json({ message: "Book not found" });
-      }
-    } else {
-      res.status(404).json({ message: "User not found" });
+    const bookFile = bucket.file(`${userid}/books/${bookId}.json`);
+    const [exists] = await bookFile.exists();
+
+    if (!exists) {
+      return res.status(404).json({ message: "Book not found" });
     }
+
+    const [content] = await bookFile.download();
+    const bookData = JSON.parse(content.toString());
+
+    res.status(200).json(bookData);
   } catch (err) {
-    console.error(err);
     res.status(500).json({ message: err.message });
-  } finally {
-    await client.close();
   }
 });
 
 // delete a book by user ID and book ID
 router.delete("/:userid/book/:bookId", async (req, res) => {
-  const userId = req.params.userid;
-  const bookId = req.params.bookId;
-
-  if (!userId || !bookId) {
-    return res
-      .status(400)
-      .json({ message: "User ID and Book ID are required" });
-  }
+  const { userid, bookId } = req.params;
 
   try {
-    await client.connect();
-    const collection = client.db("chapterchat").collection("users");
+    const bookFile = bucket.file(`${userid}/books/${bookId}.json`);
+    const [exists] = await bookFile.exists();
 
-    const result = await collection.updateOne(
-      { _id: new ObjectId(userId) },
-      { $pull: { books: { id: new ObjectId(bookId) } } }
-    );
-
-    if (result.matchedCount === 0) {
-      res.status(404).json({ message: "User not found" });
-    } else if (result.modifiedCount === 0) {
-      res.status(404).json({ message: "Book not found" });
-    } else {
-      res.status(200).json({ message: "Book deleted from shelf!" });
+    if (!exists) {
+      return res.status(404).json({ message: "Book not found" });
     }
+
+    await bookFile.delete();
+    res.status(200).json({ message: "Book deleted from shelf!" });
   } catch (err) {
-    console.error(err);
     res.status(500).json({ message: err.message });
-  } finally {
-    await client.close();
   }
 });
 
 // update the changes to the user profile
 router.post("/:userid/update", async (req, res) => {
-  const userId = req.params.userid;
+  const { userid } = req.params;
   const { email, username, password } = req.body;
 
-  if (!userId) {
-    return res.status(400).json({ message: "User ID is required" });
-  }
-
   try {
-    // Find the user by their given ID
-    await client.connect();
-    const collection = client.db("chapterchat").collection("users");
-    const user = await collection.findOne({ _id: new ObjectId(userId) });
-    if (!user) {
+    const profileFile = bucket.file(`${userid}/profile.json`);
+    const [exists] = await profileFile.exists();
+
+    if (!exists) {
       return res.status(404).json({ message: "User not found" });
     }
-    // If the user is found, check for if another user has the email or username given
-    const existingUser = await collection.findOne({
-      $or: [
-        { email: email, _id: { $ne: new ObjectId(userId) } },
-        { username: username, _id: { $ne: new ObjectId(userId) } },
-      ],
-    });
-    // return a 409 error for the client side to receive if there is existing fields
-    if (existingUser) {
-      return res
-        .status(409)
-        .json({ message: "Email or username already exists" });
-    }
 
-    // Update the user's fields if they are provided
-    const updateFields = {};
-    if (email) updateFields.email = email;
-    if (username) updateFields.username = username;
+    const [content] = await profileFile.download();
+    const userData = JSON.parse(content.toString());
+
+    if (email) userData.email = email;
+    if (username) userData.username = username;
     if (password) {
-      const salt = 10;
-      const hashedPassword = await bcrypt.hash(password, salt);
-      updateFields.password = hashedPassword;
+      userData.password = await bcrypt.hash(password, 10);
     }
-    console.log(updateFields);
-    // Save the updated user
-    await collection.updateOne(
-      { _id: new ObjectId(userId) },
-      { $set: updateFields }
-    );
 
-    // Send a success response
+    await profileFile.save(JSON.stringify(userData));
     res.status(200).json({ message: "User updated successfully" });
-  } catch (error) {
-    console.error("Error updating user:", error);
-    res.status(500).json({ message: "Internal server error" });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 });
 

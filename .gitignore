@@ -26,4 +26,7 @@ yarn-error.log*
 
 /portv2
 
-.env  
+.env
+
+# filepath: .gitignore
+config/service-account-key.json
