@@ -36,3 +36,6 @@ app.yaml
 secret.yaml
 encoded-key.txt
 settings.json
+
+# other
+.expo/README.md
