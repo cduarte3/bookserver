@@ -20,35 +20,38 @@ router.post("/", async (req, res) => {
     // List all directories to find user by email
     const [files] = await bucket.getFiles();
 
-    // Find user directory containing profile.json
-    const userFile = files.find((file) => file.name.endsWith("profile.json"));
-
-    if (userFile) {
-      // Download and parse profile
-      const [content] = await userFile.download();
-      const user = JSON.parse(content.toString());
-
-      // Verify email matches
-      if (user.email.toLowerCase() === email.toLowerCase()) {
-        const match = await bcrypt.compare(password, user.password);
-        if (match) {
-          const token = jwt.sign({ id: user.id }, process.env.SESSION_KEY, {
-            expiresIn: "1h",
-          });
-
-          res
-            .set("Authorization", `Bearer ${token}`)
-            .status(200)
-            .json({ id: user.id, token: token });
-        } else {
-          res.status(401).json({ message: "Invalid password" });
+    // Check each profile.json
+    let userProfile = null;
+    for (const file of files) {
+      if (file.name.endsWith("profile.json")) {
+        const [content] = await file.download();
+        const profile = JSON.parse(content.toString());
+        if (profile.email.toLowerCase() === email.toLowerCase()) {
+          userProfile = profile;
+          break;
         }
-      } else {
-        res.status(404).json({ message: "User not found" });
       }
-    } else {
-      res.status(404).json({ message: "User not found" });
     }
+
+    if (!userProfile) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Verify password
+    const match = await bcrypt.compare(password, userProfile.password);
+    if (!match) {
+      return res.status(401).json({ message: "Invalid password" });
+    }
+
+    // Generate token
+    const token = jwt.sign({ id: userProfile.id }, process.env.SESSION_KEY, {
+      expiresIn: "1h",
+    });
+
+    res
+      .set("Authorization", `Bearer ${token}`)
+      .status(200)
+      .json({ id: userProfile.id, token: token });
   } catch (err) {
     console.error(err);
     res.status(500).json({ message: err.message });

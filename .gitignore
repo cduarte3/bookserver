@@ -30,3 +30,9 @@ yarn-error.log*
 
 # filepath: .gitignore
 config/service-account-key.json
+
+# local env files
+app.yaml
+secret.yaml
+encoded-key.txt
+settings.json
