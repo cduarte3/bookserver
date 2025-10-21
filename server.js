@@ -3,7 +3,11 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const app = express();
-const { router: loginRoute, isAuthenticated } = require("./routes/login");
+const {
+  router: loginRoute,
+  isAuthenticated,
+  isAuthorized,
+} = require("./routes/login");
 const { bucket } = require("./config/storage");
 
 // Initialize GCS connection
@@ -75,10 +79,33 @@ async function startServer() {
 
   function authCheck(req, res, next) {
     const PUBLIC_PATHS = ["/", "/health", "/login", "/signup"];
+    const READ_ONLY_PATHS = ["/users"];
     const path = req.path;
-    if (!isAuthenticated(req) && !PUBLIC_PATHS.includes(path)) {
+    const method = req.method;
+
+    if (PUBLIC_PATHS.includes(path)) {
+      return next();
+    }
+
+    if (!isAuthenticated(req)) {
       return res.status(401).json({ message: "Unauthorized" });
     }
+
+    if (method === "GET" && path.startsWith("/users/")) {
+      return next();
+    }
+
+    if (
+      req.params.userid &&
+      (method === "POST" || method === "PUT" || method === "DELETE")
+    ) {
+      if (!isAuthorized(req)) {
+        return res.status(403).json({
+          message: "Forbidden: You can only modify your own resources",
+        });
+      }
+    }
+
     next();
   }
 

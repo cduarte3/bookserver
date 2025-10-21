@@ -45,7 +45,7 @@ router.post("/", async (req, res) => {
 
     // Generate token
     const token = jwt.sign({ id: userProfile.id }, process.env.SESSION_KEY, {
-      expiresIn: "1h",
+      expiresIn: "40d",
     });
 
     res
@@ -79,4 +79,13 @@ function isAuthenticated(req) {
   }
 }
 
-module.exports = { router, isAuthenticated };
+function isAuthorized(req) {
+  if (!isAuthenticated(req)) return false;
+
+  const requestedUserId = req.params.userid;
+  const tokenUserId = req.user.id;
+
+  return requestedUserId === tokenUserId;
+}
+
+module.exports = { router, isAuthenticated, isAuthorized };
