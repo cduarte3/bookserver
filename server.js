@@ -25,11 +25,14 @@ async function startServer() {
     process.exit(1);
   }
 
-  const allowedOrigins = [
-    "http://localhost:3000",
-    "https://chapterchat-bice.vercel.app",
-    "https://chapterchat.nn.r.appspot.com",
-  ];
+  const envAllowedOrigins = process.env.ALLOWED_ORIGINS || "";
+
+  let allowedOrigins = ["http://localhost:3000"];
+
+  if (envAllowedOrigins) {
+    const configuredOrigins = envAllowedOrigins.split(",").map((s) => s.trim());
+    allowedOrigins = allowedOrigins.concat(configuredOrigins);
+  }
 
   const corsOptions = {
     origin: function (origin, callback) {
@@ -84,7 +87,7 @@ async function startServer() {
   app.use("/login", loginRoute);
   app.use("/signup", require("./routes/signup"));
 
-  const port = process.env.PORT || 3000;
+  const port = process.env.PORT || 8080;
   const server = app.listen(port, () => {
     console.log(`Server is running on port: ${port}`);
   });
