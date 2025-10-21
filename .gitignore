@@ -27,12 +27,15 @@ yarn-error.log*
 /portv2
 
 .env
+.env.staging
+.env.production
 
 # filepath: .gitignore
 config/service-account-key.json
 
 # local env files
 app.yaml
+app.staging.yaml
 secret.yaml
 encoded-key.txt
 settings.json

@@ -29,6 +29,8 @@ async function startServer() {
     "http://localhost:3000",
     "https://chapterchat-bice.vercel.app",
     "https://chapterchat.nn.r.appspot.com",
+    "https://staging-dot-chapterchat.nn.r.appspot.com",
+    "https://chapterchat-git-rdsv1-cduarte3s-projects.vercel.app",
   ];
 
   const corsOptions = {
