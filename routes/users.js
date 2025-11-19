@@ -86,6 +86,8 @@ router.post("/:userid", async (req, res) => {
     }
 
     const bookId = uuidv4();
+    const currentDate = new Date().toISOString();
+
     const bookData = {
       id: bookId,
       author,
@@ -94,6 +96,8 @@ router.post("/:userid", async (req, res) => {
       rating,
       cover,
       genre,
+      dateAdded: currentDate,
+      lastUpdated: currentDate,
     };
 
     // Save book data
@@ -141,6 +145,7 @@ router.post(
         rating: rating || bookData.rating,
         cover: cover || bookData.cover,
         genre: genre || bookData.genre,
+        lastUpdated: new Date().toISOString(),
       };
 
       // Save updated book data
