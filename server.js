@@ -78,7 +78,7 @@ async function startServer() {
   });
 
   function authCheck(req, res, next) {
-    const PUBLIC_PATHS = ["/", "/health", "/login", "/signup"];
+    const PUBLIC_PATHS = ["/", "/health", "/login", "/login/google", "/signup"];
     const READ_ONLY_PATHS = ["/users"];
     const path = req.path;
     const method = req.method;

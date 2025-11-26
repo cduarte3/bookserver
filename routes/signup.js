@@ -15,9 +15,16 @@ router.post("/", async (req, res) => {
     });
   }
 
+  // Check lengths of username and password
   if (password.length < 6) {
-    return res.status(400).json({
+    return res.status(401).json({
       message: "Password must be at least 6 characters",
+    });
+  }
+
+  if (username.length < 3 || username.length > 20) {
+    return res.status(402).json({
+      message: "Username must be between 3 and 20 characters",
     });
   }
 

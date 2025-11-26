@@ -218,18 +218,93 @@ router.post("/:userid/update", async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
+    // Get current user data
     const [content] = await profileFile.download();
     const userData = JSON.parse(content.toString());
 
-    if (email) userData.email = email;
-    if (username) userData.username = username;
+    // Check for existing username
+    let userProfile = null;
+    const existingUsernames = new Set();
+
+    // Check if username is being changed and if it's already taken
+    if (
+      username &&
+      username.toLowerCase() !== userData.username.toLowerCase()
+    ) {
+      // Validate username length
+      if (username.length < 3 || username.length > 20) {
+        return res.status(400).json({
+          message: "Username must be between 3 and 20 characters",
+        });
+      }
+
+      // Check all profiles for duplicate username
+      const [files] = await bucket.getFiles();
+
+      for (const file of files) {
+        if (
+          file.name.endsWith("profile.json") &&
+          !file.name.startsWith(`${userid}/`)
+        ) {
+          try {
+            const [fileContent] = await file.download();
+            const profile = JSON.parse(fileContent.toString());
+
+            if (profile.username.toLowerCase() === username.toLowerCase()) {
+              return res.status(409).json({
+                message: "Username already in use",
+              });
+            }
+          } catch (parseError) {
+            continue;
+          }
+        }
+      }
+    }
+
+    // Check if email is being changed and if it's already taken
+    if (email && email.toLowerCase() !== userData.email.toLowerCase()) {
+      const [files] = await bucket.getFiles();
+
+      for (const file of files) {
+        if (
+          file.name.endsWith("profile.json") &&
+          !file.name.startsWith(`${userid}/`)
+        ) {
+          try {
+            const [fileContent] = await file.download();
+            const profile = JSON.parse(fileContent.toString());
+
+            if (profile.email.toLowerCase() === email.toLowerCase()) {
+              return res.status(408).json({
+                message: "Email already in use",
+              });
+            }
+          } catch (parseError) {
+            continue;
+          }
+        }
+      }
+    }
+
+    // Update user data
+    if (email) userData.email = email.toLowerCase();
+    if (username) userData.username = username.toLowerCase();
     if (password) {
+      if (password.length < 6) {
+        return res.status(407).json({
+          message: "Password must be at least 6 characters",
+        });
+      }
       userData.password = await bcrypt.hash(password, 10);
     }
+
+    userData.lastUpdated = new Date().toISOString();
 
     await profileFile.save(JSON.stringify(userData));
     res.status(200).json({ message: "User updated successfully" });
   } catch (err) {
+    console.error(err);
     res.status(500).json({ message: err.message });
   }
 });
