@@ -33,6 +33,7 @@ config/service-account-key.json
 
 # local env files
 app.yaml
+app.staging.yaml
 secret.yaml
 encoded-key.txt
 settings.json
