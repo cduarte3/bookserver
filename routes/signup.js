@@ -29,27 +29,25 @@ router.post("/", async (req, res) => {
   }
 
   try {
-    const [files] = await bucket.getFiles();
-    const profileFiles = files.filter((file) =>
-      file.name.endsWith("/profile.json")
-    );
+    // Check for existing email or username
+    const emailLower = email.toLowerCase();
+    const usernameLower = username.toLowerCase();
 
-    for (const file of profileFiles) {
-      try {
-        const [content] = await file.download();
-        const profile = JSON.parse(content.toString());
-        if (
-          profile.email.toLowerCase() === email.toLowerCase() ||
-          profile.username.toLowerCase() === username.toLowerCase()
-        ) {
-          return res.status(409).json({
-            message: "Email or Username already in use",
-          });
-        }
-      } catch (parseError) {
-        // Skip files that can't be parsed
-        continue;
-      }
+    const emailFile = bucket.file(`emails/${emailLower}.json`);
+    const [emailExists] = await emailFile.exists();
+    if (emailExists) {
+      return res.status(408).json({
+        message: "Email already in use",
+      });
+    }
+
+    const usernameFile = bucket.file(`usernames/${usernameLower}.json`);
+    const [usernameExists] = await usernameFile.exists();
+
+    if (usernameExists) {
+      return res.status(406).json({
+        message: "Username already in use",
+      });
     }
 
     // Create new user ID and hashed Password
@@ -58,18 +56,22 @@ router.post("/", async (req, res) => {
 
     const userData = {
       id: userId,
-      email: email.toLowerCase(),
-      username: username.toLowerCase(),
+      email: emailLower,
+      username: usernameLower,
       password: hashedPassword,
       created: new Date().toISOString(),
     };
 
-    // Save user profile in their directory
-    await bucket.file(`${userId}/profile.json`).save(JSON.stringify(userData));
+    // Save user profile and parallel creds
+    await Promise.all([
+      emailFile.save(JSON.stringify({ userId })),
+      usernameFile.save(JSON.stringify({ userId })),
+      bucket.file(`${userId}/profile.json`).save(JSON.stringify(userData)),
+    ]);
 
     // Return userId and token for navigation
     const token = jwt.sign({ id: userId }, process.env.SESSION_KEY, {
-      expiresIn: "1h",
+      expiresIn: "30d",
     });
 
     // Return status 201 for creation(s)

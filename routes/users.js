@@ -57,16 +57,22 @@ router.get("/:email/:username", async (req, res) => {
   const { email, username } = req.params;
 
   try {
-    const [files] = await bucket.getFiles();
-    const existingUser = files.some((file) => {
-      const content = JSON.parse(file.metadata);
-      return content.email === email || content.username === username;
-    });
+    const emailLower = email.toLowerCase();
+    const usernameLower = username.toLowerCase();
 
-    if (existingUser) {
-      res.status(409).json({ message: "Email or Username already exists" });
+    // New, faster user search
+    const emailFile = bucket.file(`emails/${emailLower}.json`);
+    const usernameFile = bucket.file(`usernames/${usernameLower}.json`);
+
+    const [emailExists] = await emailFile.exists();
+    const [usernameExists] = await usernameFile.exists();
+
+    if (emailExists || usernameExists) {
+      return res
+        .status(409)
+        .json({ message: "Email or Username already exists" });
     } else {
-      res.status(200).json({ message: "" });
+      return res.status(200).json({ message: "" });
     }
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -222,9 +228,7 @@ router.post("/:userid/update", async (req, res) => {
     const [content] = await profileFile.download();
     const userData = JSON.parse(content.toString());
 
-    // Check for existing username
-    let userProfile = null;
-    const existingUsernames = new Set();
+    const updates = [];
 
     // Check if username is being changed and if it's already taken
     if (
@@ -238,58 +242,47 @@ router.post("/:userid/update", async (req, res) => {
         });
       }
 
-      // Check all profiles for duplicate username
-      const [files] = await bucket.getFiles();
+      // New, faster username check
+      const usernameLower = username.toLowerCase();
+      const usernameFile = bucket.file(`usernames/${usernameLower}.json`);
+      const [usernameExists] = await usernameFile.exists();
 
-      for (const file of files) {
-        if (
-          file.name.endsWith("profile.json") &&
-          !file.name.startsWith(`${userid}/`)
-        ) {
-          try {
-            const [fileContent] = await file.download();
-            const profile = JSON.parse(fileContent.toString());
-
-            if (profile.username.toLowerCase() === username.toLowerCase()) {
-              return res.status(409).json({
-                message: "Username already in use",
-              });
-            }
-          } catch (parseError) {
-            continue;
-          }
-        }
+      if (usernameExists) {
+        return res.status(409).json({
+          message: "Username already in use",
+        });
       }
+      // Delete old username instance, create new one
+      updates.push(
+        bucket.file(`usernames/${userData.username}.json`).delete(),
+        usernameFile.save(JSON.stringify({ userId: userid }))
+      );
+
+      userData.username = usernameLower;
     }
 
     // Check if email is being changed and if it's already taken
     if (email && email.toLowerCase() !== userData.email.toLowerCase()) {
-      const [files] = await bucket.getFiles();
+      // New, faster email check
+      const emailLower = email.toLowerCase();
+      const emailFile = bucket.file(`emails/${emailLower}.json`);
+      const [emailExists] = await emailFile.exists();
 
-      for (const file of files) {
-        if (
-          file.name.endsWith("profile.json") &&
-          !file.name.startsWith(`${userid}/`)
-        ) {
-          try {
-            const [fileContent] = await file.download();
-            const profile = JSON.parse(fileContent.toString());
-
-            if (profile.email.toLowerCase() === email.toLowerCase()) {
-              return res.status(408).json({
-                message: "Email already in use",
-              });
-            }
-          } catch (parseError) {
-            continue;
-          }
-        }
+      if (emailExists) {
+        return res.status(408).json({
+          message: "Email already in use",
+        });
       }
+      // Delete old email instance, create new one
+      updates.push(
+        bucket.file(`emails/${userData.email}.json`).delete(),
+        emailFile.save(JSON.stringify({ userId: userid }))
+      );
+
+      userData.email = emailLower;
     }
 
     // Update user data
-    if (email) userData.email = email.toLowerCase();
-    if (username) userData.username = username.toLowerCase();
     if (password) {
       if (password.length < 6) {
         return res.status(407).json({
@@ -301,7 +294,9 @@ router.post("/:userid/update", async (req, res) => {
 
     userData.lastUpdated = new Date().toISOString();
 
-    await profileFile.save(JSON.stringify(userData));
+    updates.push(profileFile.save(JSON.stringify(userData)));
+
+    await Promise.all(updates);
     res.status(200).json({ message: "User updated successfully" });
   } catch (err) {
     console.error(err);

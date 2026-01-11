@@ -21,25 +21,24 @@ router.post("/", async (req, res) => {
   }
 
   try {
-    // List all directories to find user by email
-    const [files] = await bucket.getFiles();
+    // Find user by email
+    const emailLower = email.toLowerCase();
 
-    // Check each profile.json
-    let userProfile = null;
-    for (const file of files) {
-      if (file.name.endsWith("profile.json")) {
-        const [content] = await file.download();
-        const profile = JSON.parse(content.toString());
-        if (profile.email.toLowerCase() === email.toLowerCase()) {
-          userProfile = profile;
-          break;
-        }
-      }
+    // Faster, updated email search
+    const emailFile = bucket.file(`emails/${emailLower}.json`);
+    const [emailExists] = await emailFile.exists();
+
+    if (!emailExists) {
+      return res.status(404).json({ message: "Email not found" });
     }
 
-    if (!userProfile) {
-      return res.status(404).json({ message: "User not found" });
-    }
+    // Find user profile by userId from email
+    const [emailContent] = await emailFile.download();
+    const { userId } = JSON.parse(emailContent.toString());
+
+    const profileFile = bucket.file(`${userId}/profile.json`);
+    const [content] = await profileFile.download();
+    const userProfile = JSON.parse(content.toString());
 
     // Check if user has a password set
     if (!userProfile.password) {
@@ -57,7 +56,7 @@ router.post("/", async (req, res) => {
 
     // Generate token
     const token = jwt.sign({ id: userProfile.id }, process.env.SESSION_KEY, {
-      expiresIn: "40d",
+      expiresIn: "30d",
     });
 
     res
@@ -75,7 +74,7 @@ router.post("/google", async (req, res) => {
 
   if (!idToken) {
     return res
-      .status(400)
+      .status(402)
       .json({ message: "Missing required field: Google idToken" });
   }
 
@@ -95,69 +94,77 @@ router.post("/google", async (req, res) => {
       username = username.substring(0, MAX_USERNAME_LENGTH);
     }
 
-    // List all directories to find user by email
-    const [files] = await bucket.getFiles();
+    // Find user by email
+    const emailLower = email.toLowerCase();
 
-    // Check each profile.json
-    let userProfile = null;
-    const existingUsernames = new Set();
+    // Faster, updated email search
+    const emailFile = bucket.file(`emails/${emailLower}.json`);
+    const [emailExists] = await emailFile.exists();
 
-    for (const file of files) {
-      if (file.name.endsWith("profile.json")) {
-        const [content] = await file.download();
-        const profile = JSON.parse(content.toString());
+    if (emailExists) {
+      const [emailContent] = await emailFile.download();
+      const { userId } = JSON.parse(emailContent.toString());
 
-        // Keep track of usernames to avoid duplicates
-        existingUsernames.add(profile.username.toLowerCase());
+      const profileFile = bucket.file(`${userId}/profile.json`);
+      const [content] = await profileFile.download();
+      const userProfile = JSON.parse(content.toString());
 
-        if (profile.email.toLowerCase() === email.toLowerCase()) {
-          userProfile = profile;
-          break;
-        }
-      }
+      // Generate JWT auth token
+      const token = jwt.sign({ id: userProfile.id }, process.env.SESSION_KEY, {
+        expiresIn: "30d",
+      });
+
+      return res
+        .set("Authorization", `Bearer ${token}`)
+        .status(200)
+        .json({ id: userProfile.id, token: token });
     }
 
-    if (!userProfile) {
-      // Make a unique username if necessary
-      let uniqueUsername = username.toLowerCase();
-      let counter = 1;
+    // New User Registration Flow
+    let uniqueUsername = username.toLowerCase();
+    let counter = 1;
 
-      while (existingUsernames.has(uniqueUsername)) {
-        // Ensure uniqueUsername + counter doesn't exceed max length
-        const counterStr = counter.toString();
-        const baseLength = MAX_USERNAME_LENGTH - counterStr.length;
-        const baseUsername = username.substring(0, baseLength);
-        uniqueUsername = `${baseUsername.toLowerCase()}${counter}`;
-        counter++;
-      }
+    // New, faster username search
+    let usernameFile = bucket.file(`usernames/${uniqueUsername}.json`);
+    let [usernameExists] = await usernameFile.exists();
 
-      // Create new user ID and hashed Password for new/missing user
-      const userId = uuidv4();
-      userProfile = {
-        id: userId,
-        email: email.toLowerCase(),
-        username: uniqueUsername.toLowerCase(),
-        googleId: payload.sub,
-        created: new Date().toISOString(),
-      };
-      // Safe the new google profile to storage
-      await bucket
-        .file(`${userId}/profile.json`)
-        .save(JSON.stringify(userProfile));
+    while (usernameExists) {
+      const counterStr = counter.toString();
+      const baseLength = MAX_USERNAME_LENGTH - counterStr.length;
+      const baseUsername = username.substring(0, baseLength);
+      uniqueUsername = `${baseUsername.toLowerCase()}${counter}`;
+
+      usernameFile = bucket.file(`usernames/${uniqueUsername}.json`);
+      [usernameExists] = await usernameFile.exists();
+      counter++;
     }
+
+    // Create new user ID and hashed Password for new/missing user
+    const userId = uuidv4();
+    const userData = {
+      id: userId,
+      email: emailLower,
+      username: uniqueUsername,
+      googleId: payload.sub,
+      created: new Date().toISOString(),
+    };
+    // Save the new user profile and parallel creds
+    await Promise.all([
+      emailFile.save(JSON.stringify({ userId })),
+      usernameFile.save(JSON.stringify({ userId })),
+      bucket.file(`${userId}/profile.json`).save(JSON.stringify(userData)),
+    ]);
 
     // Generate JWT auth token
-    const token = jwt.sign({ id: userProfile.id }, process.env.SESSION_KEY, {
+    const token = jwt.sign({ id: userId }, process.env.SESSION_KEY, {
       expiresIn: "30d",
     });
 
-    res
-      .set("Authorization", `Bearer ${token}`)
-      .status(200)
-      .json({ id: userProfile.id, token: token });
+    // Return status 201 for creation(s)
+    res.status(201).json({ id: userId, token: token });
   } catch (err) {
     console.error("Google OAuth error: ", err);
-    res.status(401).json({ message: "Invalid Google Token" });
+    res.status(402).json({ message: "Invalid Google Token" });
   }
 });
 
