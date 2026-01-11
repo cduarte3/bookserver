@@ -6,6 +6,7 @@ const upload = multer({ storage: storage });
 const bcrypt = require("bcrypt");
 const { v4: uuidv4 } = require("uuid");
 const { bucket } = require("../config/storage");
+const User = require("../models/User");
 
 // get the info of a user by ID
 router.get("/:userid", async (req, res) => {
@@ -16,17 +17,20 @@ router.get("/:userid", async (req, res) => {
   }
 
   try {
-    // Get user profile
-    const profileFile = bucket.file(`${userId}/profile.json`);
+    // Check for GCS user id
+    const profileFile = bucket.file(`${userId}/.placeholder`);
     const [exists] = await profileFile.exists();
+    // Check for MongoDB user credentials
+    const user = await User.findOne({ id: userId });
 
-    if (!exists) {
-      return res.status(404).json({ message: "User not found" });
+    if (!user || !exists) {
+      return res
+        .status(404)
+        .json({ message: "User or user profile not found" });
     }
 
     // Get user profile data
-    const [profileContent] = await profileFile.download();
-    const userData = JSON.parse(profileContent.toString());
+    const userData = user.toObject();
 
     // Get all books from user's directory
     const [files] = await bucket.getFiles({ prefix: `${userId}/books/` });
@@ -61,13 +65,10 @@ router.get("/:email/:username", async (req, res) => {
     const usernameLower = username.toLowerCase();
 
     // New, faster user search
-    const emailFile = bucket.file(`emails/${emailLower}.json`);
-    const usernameFile = bucket.file(`usernames/${usernameLower}.json`);
+    const emailFound = await User.findOne({ email: emailLower });
+    const usernameFound = await User.findOne({ username: usernameLower });
 
-    const [emailExists] = await emailFile.exists();
-    const [usernameExists] = await usernameFile.exists();
-
-    if (emailExists || usernameExists) {
+    if (emailFound || usernameFound) {
       return res
         .status(409)
         .json({ message: "Email or Username already exists" });
@@ -86,7 +87,7 @@ router.post("/:userid", async (req, res) => {
 
   try {
     // Verify user exists
-    const [exists] = await bucket.file(`${userid}/profile.json`).exists();
+    const [exists] = await bucket.file(`${userid}/.placeholder`).exists();
     if (!exists) {
       return res.status(404).json({ message: "User not found" });
     }
@@ -217,24 +218,14 @@ router.post("/:userid/update", async (req, res) => {
   const { email, username, password } = req.body;
 
   try {
-    const profileFile = bucket.file(`${userid}/profile.json`);
-    const [exists] = await profileFile.exists();
+    const user = await User.findOne({ id: userid });
 
-    if (!exists) {
+    if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // Get current user data
-    const [content] = await profileFile.download();
-    const userData = JSON.parse(content.toString());
-
-    const updates = [];
-
     // Check if username is being changed and if it's already taken
-    if (
-      username &&
-      username.toLowerCase() !== userData.username.toLowerCase()
-    ) {
+    if (username && username.toLowerCase() !== user.username.toLowerCase()) {
       // Validate username length
       if (username.length < 3 || username.length > 20) {
         return res.status(400).json({
@@ -243,43 +234,37 @@ router.post("/:userid/update", async (req, res) => {
       }
 
       // New, faster username check
-      const usernameLower = username.toLowerCase();
-      const usernameFile = bucket.file(`usernames/${usernameLower}.json`);
-      const [usernameExists] = await usernameFile.exists();
+      const usernameFound = await User.findOne({
+        username: username.toLowerCase(),
+      });
 
-      if (usernameExists) {
+      if (usernameFound) {
         return res.status(409).json({
           message: "Username already in use",
         });
       }
-      // Delete old username instance, create new one
-      updates.push(
-        bucket.file(`usernames/${userData.username}.json`).delete(),
-        usernameFile.save(JSON.stringify({ userId: userid }))
-      );
+      // Set username value
+      user.username = username;
+    }
 
-      userData.username = usernameLower;
+    if (email && user.googleId) {
+      return res.status(401).json({
+        message: "Cannot change email for Google OAuth users",
+      });
     }
 
     // Check if email is being changed and if it's already taken
-    if (email && email.toLowerCase() !== userData.email.toLowerCase()) {
+    if (email && email.toLowerCase() !== user.email.toLowerCase()) {
       // New, faster email check
-      const emailLower = email.toLowerCase();
-      const emailFile = bucket.file(`emails/${emailLower}.json`);
-      const [emailExists] = await emailFile.exists();
+      const emailFound = await User.findOne({ email: email.toLowerCase() });
 
-      if (emailExists) {
+      if (emailFound) {
         return res.status(408).json({
           message: "Email already in use",
         });
       }
-      // Delete old email instance, create new one
-      updates.push(
-        bucket.file(`emails/${userData.email}.json`).delete(),
-        emailFile.save(JSON.stringify({ userId: userid }))
-      );
-
-      userData.email = emailLower;
+      // Set email value
+      user.email = email;
     }
 
     // Update user data
@@ -289,14 +274,11 @@ router.post("/:userid/update", async (req, res) => {
           message: "Password must be at least 6 characters",
         });
       }
-      userData.password = await bcrypt.hash(password, 10);
+      user.password = await bcrypt.hash(password, 10);
     }
+    user.lastUpdated = new Date();
 
-    userData.lastUpdated = new Date().toISOString();
-
-    updates.push(profileFile.save(JSON.stringify(userData)));
-
-    await Promise.all(updates);
+    await user.save();
     res.status(200).json({ message: "User updated successfully" });
   } catch (err) {
     console.error(err);

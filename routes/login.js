@@ -4,6 +4,7 @@ const bcrypt = require("bcrypt");
 const cookieParser = require("cookie-parser");
 const jwt = require("jsonwebtoken");
 const { v4: uuidv4 } = require("uuid");
+const { bucket } = require("../config/storage");
 const User = require("../models/User");
 const { OAuth2Client } = require("google-auth-library");
 
@@ -122,7 +123,10 @@ router.post("/google", async (req, res) => {
       created: new Date(),
     });
     // Save the new user profile
-    await user.save();
+    await Promise.all([
+      user.save(),
+      bucket.file(`${userId}/.placeholder`).save(""),
+    ]);
 
     // Generate JWT auth token
     const token = jwt.sign({ id: userId }, process.env.SESSION_KEY, {
