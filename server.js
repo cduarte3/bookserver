@@ -3,11 +3,15 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const app = express();
+// MongoDB connection
+const connectDB = require("./config/mongo-storage");
+// Routes and Auth
 const {
   router: loginRoute,
   isAuthenticated,
   isAuthorized,
 } = require("./routes/login");
+// Google Cloud Storage Bucket
 const { bucket } = require("./config/storage");
 
 // Initialize GCS connection
@@ -24,6 +28,14 @@ async function initializeStorage() {
 
 // Initialize server
 async function startServer() {
+  //MongoDB Connection
+  const dbConnected = await connectDB();
+  if (!dbConnected) {
+    console.error("Failed to connect to MongoDB. Exiting...");
+    process.exit(1);
+  }
+
+  // GCS Connection
   const storageConnected = await initializeStorage();
   if (!storageConnected) {
     process.exit(1);
