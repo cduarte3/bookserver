@@ -35,6 +35,7 @@ config/service-account-key.json
 app.yaml
 app.staging.yaml
 secret.yaml
+secret-staging.yaml
 encoded-key.txt
 settings.json
 
