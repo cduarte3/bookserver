@@ -4,6 +4,7 @@ const bcrypt = require("bcrypt");
 const { v4: uuidv4 } = require("uuid");
 const { bucket } = require("../config/storage");
 const jwt = require("jsonwebtoken");
+const User = require("../models/User");
 
 router.post("/", async (req, res) => {
   const { email, username, password } = req.body;
@@ -33,20 +34,18 @@ router.post("/", async (req, res) => {
     const emailLower = email.toLowerCase();
     const usernameLower = username.toLowerCase();
 
-    const emailFile = bucket.file(`emails/${emailLower}.json`);
-    const [emailExists] = await emailFile.exists();
-    if (emailExists) {
+    const emailFound = await User.findOne({ email: emailLower });
+    const usernameFound = await User.findOne({ username: usernameLower });
+
+    if (emailFound) {
       return res.status(408).json({
-        message: "Email already in use",
+        message: "Email already in use.",
       });
     }
 
-    const usernameFile = bucket.file(`usernames/${usernameLower}.json`);
-    const [usernameExists] = await usernameFile.exists();
-
-    if (usernameExists) {
+    if (usernameFound) {
       return res.status(406).json({
-        message: "Username already in use",
+        message: "Username already in use.",
       });
     }
 
@@ -54,19 +53,18 @@ router.post("/", async (req, res) => {
     const userId = uuidv4();
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const userData = {
+    user = new User({
       id: userId,
       email: emailLower,
       username: usernameLower,
       password: hashedPassword,
       created: new Date().toISOString(),
-    };
+    });
 
     // Save user profile and parallel creds
     await Promise.all([
-      emailFile.save(JSON.stringify({ userId })),
-      usernameFile.save(JSON.stringify({ userId })),
-      bucket.file(`${userId}/profile.json`).save(JSON.stringify(userData)),
+      user.save(),
+      bucket.file(`${userId}/.placeholder`).save(""),
     ]);
 
     // Return userId and token for navigation
