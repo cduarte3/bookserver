@@ -6,7 +6,7 @@ const upload = multer({ storage: storage });
 const bcrypt = require("bcrypt");
 const { v4: uuidv4 } = require("uuid");
 const { bucket } = require("../config/storage");
-const User = require("../models/User");
+const User = require("../models/user");
 
 // get the info of a user by ID
 router.get("/:userid", async (req, res) => {
@@ -38,7 +38,7 @@ router.get("/:userid", async (req, res) => {
       files.map(async (file) => {
         const [content] = await file.download();
         return JSON.parse(content.toString());
-      })
+      }),
     );
 
     // Combine profile and books
@@ -169,7 +169,7 @@ router.post(
         error: err.message,
       });
     }
-  }
+  },
 );
 
 // get book information
